@@ -1,109 +1,3 @@
-<?php
-include 'conn.php';
-
-//Prepare Values
-
-//Query to get Disk Values
-$query = "SELECT GBUsed, GBFree FROM cache_disk";
-$result = mysqli_query($conn, $query);
-if ($result) {
-    $row = mysqli_fetch_assoc($result);
-    $GBUsed = $row['GBUsed'];
-    $GBFree = $row['GBFree'];
-}
-
-//Query for Upstream
-$query = "SELECT Upstream, SUM(Bytes) AS TotalBytes FROM access_logs WHERE LStatus='HIT' GROUP BY Upstream";
-$result = mysqli_query($conn, $query);
-$labels = array();
-$data = array();
-if ($result) {
-    while ($row = mysqli_fetch_assoc($result)) {
-        $labelvalues[] = strtoupper($row['Upstream']);
-        $datavalues[] = $row['TotalBytes'] / 1024 / 1024 / 1024;
-    }
-}
-
-// Query to get Cache Ratio
-$query = "SELECT LStatus, SUM(Bytes) AS TotalBytes FROM access_logs GROUP BY LStatus";
-$result = mysqli_query($conn, $query);
-if ($result) {
-    $data = [];
-    while ($row = mysqli_fetch_assoc($result)) {
-        $data[$row['LStatus']] = $row['TotalBytes'];
-    }
-    $totalHits = $data['HIT'] / 1024 / 1024 / 1024;
-    $totalMiss = $data['MISS'] / 1024 / 1024 / 1024;
-}
-//Query to get Disk Values
-$query = "SELECT sum(Bytes) as Total FROM access_logs WHERE LStatus='HIT'";
-$result = mysqli_query($conn, $query);
-if ($result) {
-    $row = mysqli_fetch_assoc($result);
-    $GBServed = number_format($row['Total'] / 1024 / 1024 / 1024, 2);
-}
-
-//Query for Games
-$query = "SELECT GameName, TotalBytes
-FROM (
-    SELECT 
-        CASE 
-            WHEN steamapps.AppName IS NOT NULL AND steamapps.AppName != '' THEN steamapps.AppName 
-            ELSE access_logs.App 
-        END AS GameName,
-        SUM(Bytes) AS TotalBytes
-    FROM 
-        access_logs
-    INNER JOIN 
-        steamapps ON access_logs.App = steamapps.AppID
-    WHERE 
-        Upstream = 'steam'
-        AND LStatus = 'HIT'
-    GROUP BY 
-        GameName
-
-    UNION
-
-    SELECT App, SUM(Bytes) AS TotalBytes
-    FROM access_logs
-    WHERE Upstream='epicgames'
-    AND LStatus='HIT'
-    GROUP BY App
-
-    UNION
-
-    SELECT 'League of Legends' AS App, SUM(Bytes) AS TotalBytes
-    FROM access_logs
-    WHERE Upstream = 'riot'
-    AND LStatus = 'HIT'
-    GROUP BY App
-) AS CombinedResults
-ORDER BY TotalBytes DESC;
-";
-$result = mysqli_query($conn, $query);
-if ($result) {
-    while ($row = mysqli_fetch_assoc($result)) {
-        $labelvalues4[] = $row['GameName'];
-        $datavalues4[] = $row['TotalBytes'] / 1024 / 1024 / 1024;
-    }
-}
-
-//Query for IPs
-$query = "SELECT IP,sum(Bytes) as TotalBytes
-FROM access_logs
-WHERE LStatus='HIT'
-and IP <> '172.17.100.3'
-GROUP BY IP
-ORDER BY TotalBytes DESC
-LIMIT 8;";
-$result = mysqli_query($conn, $query);
-if ($result) {
-    while ($row = mysqli_fetch_assoc($result)) {
-        $IPvalue[] = $row['IP'];
-        $GBValuep[] = $row['TotalBytes'] / 1024 / 1024 / 1024;
-    }
-}
-?>
 <!DOCTYPE html>
 <html lang="en">
 
@@ -113,6 +7,113 @@ if ($result) {
     <title>Dashboard</title>
     <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+    <script>
+    $(document).ready(function() {
+        function refreshData()
+        {
+            fetchAndUpdateData();
+        }
+
+        setInterval(refreshData, 5000); // Fetch data every 60 seconds
+
+        function fetchAndUpdateData()
+        {
+            $.ajax({
+                type: "POST",
+                url: "queryData.php",
+                dataType: "json",
+                success: function(data) {
+                    parseData(data);
+                }
+            });
+        }        
+
+        function parseData(result) {
+            var GBUsed = result.GBUsed;
+            var GBFree = result.GBFree;
+            var labelvalues = result.labelvalues;
+            var datavalues = result.datavalues;
+            var totalHits = result.totalHits;
+            var totalMiss = result.totalMiss;
+            var GBServed = result.GBServed;
+            var labelvalues4 = result.labelvalues4;
+            var datavalues4 = result.datavalues4;
+            var IPvalue = result.IPvalue;
+            var GBValuep = result.GBValuep;
+
+            var data1 = {
+            labels: ['Used', 'Free'],
+            datasets: [{
+                data: [<?= $GBUsed ?>, <?= $GBFree ?>],
+                backgroundColor: ['#FF9800', '#4CAF50'],
+                hoverBackgroundColor: ['#FF9800', '#4CAF50']
+                }]
+            };
+            var chartData2 = {
+                labels: labelvalues,
+                datasets: [{
+                    data: datavalues
+                }]
+            };
+
+            var data3 = {
+                labels: ['Served', 'Cached'],
+                datasets: [{
+                    data: [<?= $totalHits ?>, <?= $GBUsed ?>],
+                    backgroundColor: ['#4CAF50', '#FF9800'],
+                    hoverBackgroundColor: ['#4CAF50', '#FF9800']
+                }]
+            };
+
+            var chartData4 = {
+                labels: labelvalues4,
+                datasets: [{
+                    data: datavalues4
+                }]
+            };
+            var options4 = {
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        enabled: true
+                    }
+                }
+            };
+
+            if (window.chart1) {window.chart1.destroy();}
+            var ctx1 = document.getElementById('pieChart1').getContext('2d');
+            window.chart1 = new Chart(ctx1, {
+                type: 'pie',
+                data: data1
+            });
+
+            if (window.chart2) {window.chart2.destroy();}
+            var ctx2 = document.getElementById('pieChart2').getContext('2d');
+            window.chart2 = new Chart(ctx2, {
+                type: 'pie',
+                data: chartData2
+            });
+            
+            if (window.chart3) {window.chart3.destroy();}
+            var ctx3 = document.getElementById('pieChart3').getContext('2d');
+            window.chart3 = new Chart(ctx3, {
+                type: 'pie',
+                data: data3
+            });
+            
+            if (window.chart4) {window.chart4.destroy();}
+            var ctx4 = document.getElementById('pieChart4').getContext('2d');
+            window.chart4 = new Chart(ctx4, {
+                type: 'pie',
+                data: chartData4,
+                options: options4
+            });
+        }
+    });
+    </script>
     <style>
         .row {
             height: 50vh;
@@ -143,15 +144,15 @@ if ($result) {
     <div class="container-fluid">
         <div class="row">
             <div class="col text-center">
-                <h3>Cache Disk Status GB</h3>
+                <h3>Cache Disk Status (GiB)</h3>
                 <canvas id="pieChart1" class="pie-chart"></canvas>
             </div>
             <div class="col text-center">
-                <h3>Served by Upstream GB</h3>
+                <h3>Served by Upstream (GiB)</h3>
                 <canvas id="pieChart2" class="pie-chart"></canvas>
             </div>
             <div class="col text-center">
-                <h3>Cache Ratio GB</h3>
+                <h3>Cache Ratio (GiB)</h3>
                 <canvas id="pieChart3" class="pie-chart"></canvas>
             </div>
         </div>
