@@ -61,16 +61,32 @@ while IFS= read -r line; do
   fi
 done < "$LOG_FILE"
 
+dboutput=""
+dbstatus=0
+
 # Insert aggregated records into the database
 for key in "${!aggregated_data[@]}"; do
   IFS='|' read -r ip upstream app status <<< "$key"
   bytes="${aggregated_data[$key]}"
   echo "Inserting record into database: IP=$ip, Upstream=$upstream, App=$app, Status=$status, Bytes=$bytes"
-  mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" -e "INSERT INTO access_logs (Upstream, LStatus, IP, App, Bytes) VALUES ('$upstream', '$status', '$ip', '$app', '$bytes');"
+  dboutput=$(mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" -e "INSERT INTO access_logs (Upstream, LStatus, IP, App, Bytes) VALUES ('$upstream', '$status', '$ip', '$app', '$bytes');" 2>&1)
+  dbstatus=$?
+
+  if [ $dbstatus -ne 0 ]; then
+    echo "Error executing INSERT query:"
+    echo "$dboutput"
+    break
+  fi
 done
 
-# Clear the log file
-echo "" > "$LOG_FILE"
+if [ $dbstatus -eq 0 ]; then
+  # Clear the log file when all data was successfully offloaded
+  echo "" > "$LOG_FILE"
+fi
+
+echo "Calculating disk usage"
+
+# In case the db is available, and the problem is with our query, we can still try to update the disk state
 
 # df prints used and free size, and does not list every directory, which makes this faster than du for the cache/data folder
 disk_usage_cache=$(df -BK $CACHE_LOCATION | awk 'NR==2 {print $4,$3}')
