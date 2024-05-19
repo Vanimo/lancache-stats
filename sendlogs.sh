@@ -11,6 +11,10 @@ DB_USER="dbusername"
 DB_PASS="dbpassword"
 DB_NAME="lancache_db"
 
+# The timestamp format for the database.
+# Removing the seconds makes it aggregate the date per minute.
+DB_TIME_FORMAT="%Y-%m-%d %H:%M:00"
+
 # Path to a file that, when created, indicates the script is already active
 LOCKFILE=/tmp/sendlogs.lock
 
@@ -34,7 +38,7 @@ echo "Script started"
 declare -A aggregated_data
 
 while IFS= read -r line; do
-  read upstream status ip bytes url <<< $(echo "$line" | awk '{print $3, $4, $5, $7, $8}')
+  read ts tz upstream status ip bytes url <<< $(echo "$line" | awk '{print $0, $1, $3, $4, $5, $7, $8}')
 
   # Skip lines with irrelevant status or missing fields
   if [[ -z "$upstream" || -z "$status" || -z "$ip" || -z "$bytes" ]]; then
@@ -53,8 +57,12 @@ while IFS= read -r line; do
     }
     }')
 
+    # combine the timestamp and timezone part, strip the brackets and replace the slashes from the output
+    ts_to_parse=$(echo "$ts $tz" | tr -d '[]' | sed 's/:/ /' | sed 's#/#-#g')
+    tsMinute=$(date -d "$ts_to_parse" -u +"$DB_TIME_FORMAT")
+
     # Aggregate data
-    key="$ip|$upstream|$app|$status"
+    key="$tsMinute|$ip|$upstream|$app|$status"
     ((aggregated_data["$key"] += bytes))
   else
     echo "Skipping log entry with irrelevant status: $status"
@@ -66,10 +74,10 @@ dbstatus=0
 
 # Insert aggregated records into the database
 for key in "${!aggregated_data[@]}"; do
-  IFS='|' read -r ip upstream app status <<< "$key"
+  IFS='|' read -r ts ip upstream app status <<< "$key"
   bytes="${aggregated_data[$key]}"
-  echo "Inserting record into database: IP=$ip, Upstream=$upstream, App=$app, Status=$status, Bytes=$bytes"
-  dboutput=$(mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" -e "INSERT INTO access_logs (Upstream, LStatus, IP, App, Bytes) VALUES ('$upstream', '$status', '$ip', '$app', '$bytes');" 2>&1)
+  echo "Inserting record into database: LogDate=$ts, IP=$ip, Upstream=$upstream, App=$app, Status=$status, Bytes=$bytes"
+  dboutput=$(mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" -e "INSERT INTO access_logs (LogDate, Upstream, LStatus, IP, App, Bytes) VALUES ('$ts' ,'$upstream', '$status', '$ip', '$app', '$bytes');" 2>&1)
   dbstatus=$?
 
   if [ $dbstatus -ne 0 ]; then
