@@ -59,10 +59,10 @@ while IFS= read -r line; do
 
     # combine the timestamp and timezone part, strip the brackets and replace the slashes from the output
     ts_to_parse=$(echo "$ts $tz" | tr -d '[]' | sed 's/:/ /' | sed 's#/#-#g')
-    tsMinute=$(date -d "$ts_to_parse" -u +"$DB_TIME_FORMAT")
+    tsUtc=$(date -d "$ts_to_parse" -u +"$DB_TIME_FORMAT")
 
     # Aggregate data
-    key="$tsMinute|$ip|$upstream|$app|$status"
+    key="$tsUtc|$ip|$upstream|$app|$status"
     ((aggregated_data["$key"] += bytes))
   else
     echo "Skipping log entry with irrelevant status: $status"
